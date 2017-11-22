@@ -2,7 +2,12 @@
 setwd("~/Fordham/Statistical Programming with R/Final Project")
 base <- read.csv(file = 'shelterdata.csv',sep = ",",header = T,na.strings="")
 
-library("dplyr")
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+library(scales)
+library(VIM)
+library(mice)
 
 #--------------- Building Features ---------------#
 
@@ -10,7 +15,7 @@ library("dplyr")
 base$DateTime = as.POSIXct(strptime(base$DateTime, "%m/%d/%Y %H:%M"))
 
 # No Name Indicator
-base<-mutate(base, NoNameInd = ifelse(is.na(Name), 1, 0))
+base<-mutate(base, NoNameInd = as.factor(ifelse(is.na(Name), 1, 0)))
 
 # Days Old
 base$numericPart <- gsub("[^0-9]", "", base$AgeuponOutcome)
@@ -24,7 +29,7 @@ base <- base %>%
       gsub("[0-9]|[[:space:]]", "", base$AgeuponOutcome)=='months' ~ (as.numeric(gsub("[^0-9]", "", base$AgeuponOutcome))*30),
       gsub("[0-9]|[[:space:]]", "", base$AgeuponOutcome)=='days' ~ (as.numeric(gsub("[^0-9]", "", base$AgeuponOutcome))),
       gsub("[0-9]|[[:space:]]", "", base$AgeuponOutcome)=='week' ~ (as.numeric(gsub("[^0-9]", "", base$AgeuponOutcome))*7),
-      gsub("[0-9]|[[:space:]]", "", base$AgeuponOutcome)=='day' ~ (as.numeric(gsub("[^0-9]", "", base$AgeuponOutcome))),
+      gsub("[0-9]|[[:space:]]", "", base$AgeuponOutcome)=='day' ~ (as.numeric(gsub("[^0-9]", "", base$AgeuponOutcome)))
     )
   )
 
@@ -73,43 +78,14 @@ base <- base %>% mutate(month=format(DateTime, "%m"))
 
 
 #---------------------- Count Nulls ----------------------#
-apply(base, 2, function(x) print(sum(is.na(x))))
+sapply(base, function(x) sum(is.na(x)))
+md.pattern(base)
+
+aggr(base[,1:9], numbers=T, sortVars=T, labels=T)
+
+#---------------------- Split Train and Test -------------------------#
+
 base <- na.omit(base[,-2])
-
-#---------------------- Plotting -------------------------#
-
-factorPlot <-function(df,dataCol) {
-df %>% select(OutcomeType,as.factor(dataCol))  %>% 
-  ggplot(aes(x=dataCol, fill=OutcomeType)) +
-  geom_bar(position = "fill") +
-  labs(x = "Feature", y= "Outcome") + 
-  coord_flip()
-}
-
-ggplot(base,aes(OutcomeType, daysOld)) +
-  geom_boxplot()
-
-library(ggthemes)
-library(scales)
-ggplot(base, aes(OutcomeType, daysOld)) +
-  geom_boxplot() + 
-  ggtitle("Outcome by Days old") +
-  theme_tufte() + 
-  scale_y_continuous(labels = comma)
-
-ggplot(base, aes(OutcomeType, as.numeric(hour))) +
-  geom_boxplot() + 
-  ggtitle("Outcome by Hour") +
-  theme_tufte() + 
-  scale_y_continuous(labels = comma)
-
-#---------------------- Check for Collinearity -------------------------#
-
-
-#---------------------- Modeling -------------------------#
-
-# Split into Train and Test
-## 80% of the sample size
 drops <- c('AnimalID','DateTime','SexuponOutcome','AgeuponOutcome','Breed','Color','numericPart','daysOld','SpayedIndicator')
 base_tmp <- base[ , !(names(base) %in% drops)]
 
@@ -118,10 +94,154 @@ set.seed(123)
 train_ind <- sample(seq_len(nrow(base_tmp)), size = smp_size)
 train <- base_tmp[train_ind, ]
 test <- base_tmp[-train_ind, ]
+#---------------------- Plotting -------------------------#
+
+factorPlot <-function(df,dataCol) {
+df %>% select(OutcomeType,as.factor(dataCol))  %>% 
+  ggplot(aes(x=dataCol, fill=OutcomeType)) +
+  geom_bar(position = "fill") +
+  labs(x = dataCol, y= "Outcome") + 
+  coord_flip()
+}
+
+# No Name Indicator Using Plotting Function
+factorPlot(train,train$AnimalType)
+
+# No Name Indicator Formatted
+train %>% select(OutcomeType,AnimalType,NoNameInd)  %>% 
+  ggplot(aes(x=NoNameInd, fill=OutcomeType)) +
+  facet_grid(. ~ AnimalType) +
+  geom_bar(position = "fill") +
+  labs(x = "Does the pet have a name?", y= "Outcome") + 
+  scale_x_discrete(labels=c("1" = "Yes", "0" = "No")) +
+  ggtitle("No Name Indicator by Adoption Outcome") +
+  scale_y_continuous(labels = percent) +
+  theme_fivethirtyeight() +
+  scale_fill_manual(values=c("#009e73","#0072b2")) +
+  coord_flip()
+
+# Animal Type Formatted
+train %>% select(OutcomeType,AnimalType)  %>% 
+  ggplot(aes(x=AnimalType, fill=OutcomeType)) +
+  geom_bar(position = "fill") +
+  labs(x = "Animal Type", y= "Outcome") + 
+  ggtitle("Animal Type by Adoption Outcome") +
+  scale_y_continuous(labels = percent) +
+  theme_fivethirtyeight() +
+  scale_fill_manual(values=c("#009e73","#0072b2")) +
+  coord_flip()
+
+# Days Old Binned Formatted
+train2 <- train %>% mutate(daysOldBinned2 = factor(train$daysOldBinned,c("3 Months","6 Months","1 Year","2 Years","5 Years","10 Years","10+ Years")))
+train2 %>% select(OutcomeType,daysOldBinned2,AnimalType)  %>% 
+  ggplot(aes(x=daysOldBinned2, fill=OutcomeType)) +
+  geom_bar(position = "fill") +
+  labs(x = "Days Old", y= "Outcome") + 
+  ggtitle("No Name Indicator by Adoption Outcome") +
+  scale_y_continuous(labels = percent) +
+  theme_fivethirtyeight() +
+  scale_fill_manual(values=c("#009e73","#0072b2")) +
+  facet_grid(. ~ AnimalType) +
+  coord_flip()
+
+# Pit Indicator Formatted
+train %>% select(OutcomeType,pitIndicator,AnimalType)  %>% 
+  ggplot(aes(x=pitIndicator, fill=OutcomeType)) +
+  geom_bar(position = "fill") +
+  labs(x = "Pit Indicator", y= "Outcome") + 
+  ggtitle("Pit Indicator by Adoption Outcome") +
+  scale_y_continuous(labels = percent) +
+  scale_x_discrete(labels=c("Y" = "Yes", "N" = "No")) +
+  theme_fivethirtyeight() +
+  scale_fill_manual(values=c("#009e73","#0072b2")) +
+  facet_grid(. ~ AnimalType) +
+  coord_flip()
+
+# Sex Formatted
+train %>% select(OutcomeType,sex,AnimalType)  %>% 
+  ggplot(aes(x=sex, fill=OutcomeType)) +
+  geom_bar(position = "fill") +
+  labs(x = "Sex", y= "Outcome") + 
+  ggtitle("Sex by Adoption Outcome") +
+  scale_y_continuous(labels = percent) +
+  theme_fivethirtyeight() +
+  scale_fill_manual(values=c("#009e73","#0072b2")) +
+  facet_grid(. ~ AnimalType) +
+  coord_flip() 
+
+# Spayed / Neutered Formatted
+train %>% select(OutcomeType,Spayed,AnimalType)  %>% 
+  ggplot(aes(x=Spayed, fill=OutcomeType)) +
+  geom_bar(position = "fill") +
+  labs(x = "Spayed / Neutered Indicator", y= "Outcome") + 
+  ggtitle("Spayed / Neutered Indicator by Adoption Outcome") +
+  scale_y_continuous(labels = percent) +
+  theme_fivethirtyeight() +
+  scale_fill_manual(values=c("#009e73","#0072b2")) +
+  facet_grid(. ~ AnimalType) +
+  coord_flip() 
+
+# Mixed Breed Formatted
+train %>% select(mixedBreed,OutcomeType,AnimalType)  %>% 
+  ggplot(aes(x=mixedBreed, fill=OutcomeType)) +
+  geom_bar(position = "fill") +
+  labs(x = "Mixed Breed Indicator", y= "Outcome") + 
+  ggtitle("Mixed Breed Indicator by Adoption Outcome") +
+  scale_y_continuous(labels = percent) +
+  theme_fivethirtyeight() +
+  scale_fill_manual(values=c("#009e73","#0072b2")) +
+  facet_grid(. ~ AnimalType) +
+  coord_flip() 
+
+
+# Days Old formatted Plot
+ggplot(base, aes(OutcomeType, daysOld)) +
+  geom_boxplot() + 
+  ggtitle("Adoption Outcome by Days old") +
+  theme_classic() + 
+  labs(x = "Outcome Type", y="Days Old") +
+  scale_y_continuous(labels = comma) +
+  facet_grid(. ~ AnimalType)
+
+# Days Old Binned Formatted
+train %>% select(OutcomeType,month,AnimalType)  %>% 
+  ggplot(aes(x=month, fill=OutcomeType)) +
+  geom_bar(position = "fill") +
+  labs(x = "Month", y= "Outcome") + 
+  ggtitle("Adoption Outcome by Month") +
+  scale_y_continuous(labels = percent) +
+  theme_fivethirtyeight() +
+  scale_fill_manual(values=c("#009e73","#0072b2")) +
+  facet_grid(. ~ AnimalType) +
+  coord_flip()
+
+# Hour Formatted Plot
+avg_hour <- train %>% group_by(OutcomeType,AnimalType) %>% summarise(Average.Hour = mean(as.numeric(hour)))
+ggplot(train, aes(OutcomeType, as.numeric(hour))) +
+  geom_boxplot() + 
+  ggtitle("Adoption Outcome by Hour") +
+  theme_classic() +
+  labs(x = "Outcome Type", y = "Hour") +
+  scale_y_continuous(labels = comma) +
+  facet_grid(. ~ AnimalType)
+
+# Review Percent Adopted by Breed
+side1 <- base %>% filter(OutcomeType=="Positive") %>% group_by(Breed) %>% summarise(positive=n())
+side2 <- base %>% filter(OutcomeType=="Negative") %>% group_by(Breed) %>% summarise(negative=n())
+fin <- inner_join(side1,side2,by="Breed")
+fin <- fin %>% mutate(percent_positive = round(positive/(negative+positive),2))
+densityplot(fin$percent_positive)
+#---------------------- Modeling -------------------------#
 
 # Baseline model
-glm1 <- glm(OutcomeType ~ . , data=train, family = binomial())
+
+glm1 <- glm(OutcomeType ~ . -sex, data=train, family = binomial())
 summary(glm1)
+
+# Check for Collinearity
+library(car)
+vif(glm1)
+
 
 # Extract more interpretable coefficients and create a function to do it
 formatCf <- function(glm_model) {
@@ -146,3 +266,6 @@ modelSummary <-function(dataset,model,description) {
          model_results <- data.frame(description,accuracy,recall,specificity,precision,stringsAsFactors=FALSE))
   model_results <<- model_results
 }
+
+modelSummary(dataset = train,model = glm1, description = "Train glm1")
+modelSummary(dataset = test,model = glm1, description = "Test glm1")
