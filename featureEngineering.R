@@ -8,6 +8,8 @@ library(ggthemes)
 library(scales)
 library(VIM)
 library(mice)
+library(caret)
+library(mlbench)
 
 #--------------- Building Features ---------------#
 
@@ -37,13 +39,13 @@ base <- base %>%
 base <- base %>%
   mutate(
     daysOldBinned = case_when(
-       daysOld < 90 ~ "3 Months",
-       daysOld < 180 & daysOld >=90 ~ "6 Months",
-       daysOld < 365 & daysOld >=180 ~ "1 Year",
-       daysOld < 730 & daysOld >=365 ~ "2 Years",
-       daysOld < 1825 & daysOld >= 730 ~ "5 Years",
-       daysOld < 3650 & daysOld >=1825 ~ "10 Years",
-       daysOld >= 3650 ~ "10+ Years")
+       daysOld <= 90 ~ "3 Months",
+       daysOld <= 180 & daysOld >90 ~ "6 Months",
+       daysOld <= 365 & daysOld >180 ~ "1 Year",
+       daysOld <= 730 & daysOld >365 ~ "2 Years",
+       daysOld <= 1825 & daysOld > 730 ~ "5 Years",
+       daysOld <= 3650 & daysOld >1825 ~ "10 Years",
+       daysOld >= 3651 ~ "10+ Years")
   )
 
 
@@ -75,6 +77,15 @@ base <- base %>% mutate(hour=format(DateTime, "%H"))
 # Month
 base <- base %>% mutate(month=format(DateTime, "%m"))
 
+# Black Color Indicator
+base <- base %>% mutate(blackColorInd=ifelse(grepl('black',tolower(Color)), 'Y', 'N'))
+
+# Breed Transformation
+side1 <- base %>% filter(OutcomeType=="Positive") %>% group_by(Breed) %>% summarise(positive=n())
+side2 <- base %>% filter(OutcomeType=="Negative") %>% group_by(Breed) %>% summarise(negative=n())
+fin <- inner_join(side1,side2,by="Breed")
+fin <- fin %>% mutate(percent_positive = round(positive/(negative+positive),2))
+densityplot(fin$percent_positive)
 
 
 #---------------------- Count Nulls ----------------------#
@@ -85,8 +96,8 @@ aggr(base[,1:9], numbers=T, sortVars=T, labels=T)
 
 #---------------------- Split Train and Test -------------------------#
 
-base <- na.omit(base[,-2])
-drops <- c('AnimalID','DateTime','SexuponOutcome','AgeuponOutcome','Breed','Color','numericPart','daysOld','SpayedIndicator')
+#base <- na.omit(base[,-2])
+drops <- c('AnimalID','DateTime','SexuponOutcome','AgeuponOutcome','numericPart','daysOld','SpayedIndicator')
 base_tmp <- base[ , !(names(base) %in% drops)]
 
 smp_size <- floor(0.80 * nrow(base_tmp))
@@ -94,6 +105,40 @@ set.seed(123)
 train_ind <- sample(seq_len(nrow(base_tmp)), size = smp_size)
 train <- base_tmp[train_ind, ]
 test <- base_tmp[-train_ind, ]
+
+# ---------------------- Create Breed and Color Transformed Features ------------ #
+
+# Breed Transformation
+side1 <- train %>% filter(OutcomeType=="Positive") %>% group_by(Breed) %>% summarise(positive=n())
+side2 <- train %>% filter(OutcomeType=="Negative") %>% group_by(Breed) %>% summarise(negative=n())
+fin <- inner_join(side1,side2,by="Breed")
+fin <- fin %>% mutate(breedPcnt = round(positive/(negative+positive),2))
+densityplot(fin$breedPcnt)
+
+train <- fin %>% select(Breed,breedPcnt) %>% inner_join(train,fin,by="Breed")
+train <- train %>% select(-Breed)
+medianBreed <- median(train$breedPcnt)
+test <- left_join(test,fin,by="Breed")
+test<- mutate(test, breedPcnt = ifelse(is.na(breedPcnt), medianBreed, breedPcnt)) %>% select(-c(Breed,positive,negative))
+
+# Color Transformation
+side1.1 <- train %>% filter(OutcomeType=="Positive") %>% group_by(Color) %>% summarise(positive=n())
+side2.1 <- train %>% filter(OutcomeType=="Negative") %>% group_by(Color) %>% summarise(negative=n())
+fin2 <- inner_join(side1.1,side2.1,by="Color")
+fin2 <- fin2 %>% mutate(colorPcnt = round(positive/(negative+positive),2))
+densityplot(fin2$colorPcnt)
+
+train <- fin2 %>% select(Color,colorPcnt) %>% inner_join(train,fin2,by="Color")
+train <- train %>% select(-Color)
+medianColor <- median(train$colorPcnt)
+test <- left_join(test,fin2,by="Color")
+test<- mutate(test, breedPcnt = ifelse(is.na(colorPcnt), medianColor, colorPcnt)) %>% select(-c(Color,positive,negative))
+
+train <- train %>% select(-Name)
+test <- test %>% select(-Name)
+
+train <- na.omit(train)
+test <- na.omit(test)
 #---------------------- Plotting -------------------------#
 
 factorPlot <-function(df,dataCol) {
@@ -113,7 +158,7 @@ train %>% select(OutcomeType,AnimalType,NoNameInd)  %>%
   facet_grid(. ~ AnimalType) +
   geom_bar(position = "fill") +
   labs(x = "Does the pet have a name?", y= "Outcome") + 
-  scale_x_discrete(labels=c("1" = "Yes", "0" = "No")) +
+  scale_x_discrete(labels=c("1" = "No", "0" = "No")) +
   ggtitle("No Name Indicator by Adoption Outcome") +
   scale_y_continuous(labels = percent) +
   theme_fivethirtyeight() +
@@ -193,6 +238,17 @@ train %>% select(mixedBreed,OutcomeType,AnimalType)  %>%
   facet_grid(. ~ AnimalType) +
   coord_flip() 
 
+# Black Color Indicator Formatted
+train %>% select(blackColorInd,OutcomeType,AnimalType)  %>% 
+  ggplot(aes(x=blackColorInd, fill=OutcomeType)) +
+  geom_bar(position = "fill") +
+  labs(x = "Black Color Indicator", y= "Outcome") + 
+  ggtitle("Black Color Indicator by Adoption Outcome") +
+  scale_y_continuous(labels = percent) +
+  theme_fivethirtyeight() +
+  scale_fill_manual(values=c("#009e73","#0072b2")) +
+  facet_grid(. ~ AnimalType) +
+  coord_flip() 
 
 # Days Old formatted Plot
 ggplot(base, aes(OutcomeType, daysOld)) +
@@ -225,12 +281,6 @@ ggplot(train, aes(OutcomeType, as.numeric(hour))) +
   scale_y_continuous(labels = comma) +
   facet_grid(. ~ AnimalType)
 
-# Review Percent Adopted by Breed
-side1 <- base %>% filter(OutcomeType=="Positive") %>% group_by(Breed) %>% summarise(positive=n())
-side2 <- base %>% filter(OutcomeType=="Negative") %>% group_by(Breed) %>% summarise(negative=n())
-fin <- inner_join(side1,side2,by="Breed")
-fin <- fin %>% mutate(percent_positive = round(positive/(negative+positive),2))
-densityplot(fin$percent_positive)
 #---------------------- Modeling -------------------------#
 
 # Baseline model
@@ -267,5 +317,18 @@ modelSummary <-function(dataset,model,description) {
   model_results <<- model_results
 }
 
-modelSummary(dataset = train,model = glm1, description = "Train glm1")
-modelSummary(dataset = test,model = glm1, description = "Test glm1")
+modelSummary(dataset = train,model = glm1, description = "Train glm1 with New Feat")
+modelSummary(dataset = test,model = glm1, description = "Test glm1 with New Feat")
+
+# --------------- K-Fold Cross-Validation -------------- #
+pet.glm.cv<-
+  train(OutcomeType ~ ., data=train, method="glm", family=binomial(),
+        trControl=trainControl(method="repeatedCV", repeats = 5, number = 5,
+                               savePredictions = T))
+pet.glm.cv$results
+pet.glm.cv
+
+pet.glm.cv$resample
+ggplot(pet.glm.cv$resample, aes(x=Accuracy)) +
+  geom_density(alpha=.2, fill="red")
+
