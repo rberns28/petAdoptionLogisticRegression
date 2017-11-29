@@ -80,14 +80,6 @@ base <- base %>% mutate(month=format(DateTime, "%m"))
 # Black Color Indicator
 base <- base %>% mutate(blackColorInd=ifelse(grepl('black',tolower(Color)), 'Y', 'N'))
 
-# Breed Transformation
-side1 <- base %>% filter(OutcomeType=="Positive") %>% group_by(Breed) %>% summarise(positive=n())
-side2 <- base %>% filter(OutcomeType=="Negative") %>% group_by(Breed) %>% summarise(negative=n())
-fin <- inner_join(side1,side2,by="Breed")
-fin <- fin %>% mutate(percent_positive = round(positive/(negative+positive),2))
-densityplot(fin$percent_positive)
-
-
 #---------------------- Count Nulls ----------------------#
 sapply(base, function(x) sum(is.na(x)))
 md.pattern(base)
@@ -97,7 +89,8 @@ aggr(base[,1:9], numbers=T, sortVars=T, labels=T)
 #---------------------- Split Train and Test -------------------------#
 
 #base <- na.omit(base[,-2])
-drops <- c('AnimalID','DateTime','SexuponOutcome','AgeuponOutcome','numericPart','daysOld','SpayedIndicator')
+#drops <- c('AnimalID','DateTime','SexuponOutcome','AgeuponOutcome','numericPart','daysOld','SpayedIndicator')
+drops <- c('AnimalID','DateTime','SexuponOutcome','AgeuponOutcome','numericPart')
 base_tmp <- base[ , !(names(base) %in% drops)]
 
 smp_size <- floor(0.80 * nrow(base_tmp))
@@ -281,6 +274,10 @@ ggplot(train, aes(OutcomeType, as.numeric(hour))) +
   scale_y_continuous(labels = comma) +
   facet_grid(. ~ AnimalType)
 
+# 
+train %>% select(OutcomeType)  %>% group_by(OutcomeType) %>% summarise(n=n())
+
+
 #---------------------- Modeling -------------------------#
 
 # Baseline model
@@ -308,7 +305,7 @@ modelSummary <-function(dataset,model,description) {
   conf <- xtabs(~ dataset$OutcomeType + predict.class)
   accuracy <- (round((conf[1,1] + conf[2,2])/sum(conf),4)*100)
   recall <- (round(conf[2,2]/sum(conf[2,]),4)*100)
-  specificity <- (round(conf[1,1]/sum(conf[,1]),4)*100)
+  specificity <- (round(conf[1,1]/sum(conf[1,]),4)*100)
   precision <- (round(conf[2,2]/sum(conf[,2]),4)*100)
   newLine <- c(description,accuracy,recall,specificity,precision)
   ifelse(exists("model_results") && is.data.frame(get("model_results")),
@@ -317,8 +314,172 @@ modelSummary <-function(dataset,model,description) {
   model_results <<- model_results
 }
 
-modelSummary(dataset = train,model = glm1, description = "Train glm1 with New Feat")
-modelSummary(dataset = test,model = glm1, description = "Test glm1 with New Feat")
+modelSummary(dataset = train,model = glm1, description = "Train glm1 with All Features")
+modelSummary(dataset = test,model = glm1, description = "Test glm1 with All Features")
+
+# Convert hour to numeric
+train$hour <- as.numeric(train$hour)
+test$hour <- as.numeric(test$hour)
+glm2 <- glm(OutcomeType ~ . -sex, data=train, family = binomial())
+summary(glm2)
+modelSummary(dataset = train,model = glm2, description = "Train glm2 with All Features and hour converted to numeric")
+modelSummary(dataset = test,model = glm2, description = "Test glm2 with All Features and hour converted to numeric")
+
+# Convert month to numeric
+train$month <- as.numeric(train$month)
+test$month <- as.numeric(test$month)
+glm3 <- glm(OutcomeType ~ . -sex, data=train, family = binomial())
+summary(glm3)
+modelSummary(dataset = train,model = glm3, description = "Train glm3 with All Features and hour & month converted to numeric")
+modelSummary(dataset = test,model = glm3, description = "Test glm3 with All Features and hour & month converted to numeric")
+
+# Drop daysOld Binned feature
+train$hour <- as.factor(train$hour)
+test$hour <- as.factor(test$hour)
+train$month <- as.factor(train$month)
+test$month <- as.factor(test$month)
+glm4 <- glm(OutcomeType ~ . -sex -daysOldBinned, data=train, family = binomial())
+summary(glm4)
+modelSummary(dataset = train,model = glm4, description = "Train glm4 with factor hour & month AND removing binned age")
+modelSummary(dataset = test,model = glm4, description = "Test glm4 with factor hour & month AND removing binned age")
+
+# Include "sex" feature
+glm5 <- glm(OutcomeType ~ . -daysOldBinned, data=train, family = binomial())
+summary(glm5)
+modelSummary(dataset = train,model = glm5, description = "Train glm5 - same as glm4 but includes sex")
+modelSummary(dataset = test,model = glm5, description = "Test glm5 - same as glm4 but includes sex")
+
+# Without color pcnt and breed pcnt
+glm6 <- glm(OutcomeType ~ . -daysOldBinned -colorPcnt -breedPcnt, data=train, family = binomial())
+summary(glm6)
+modelSummary(dataset = train,model = glm6, description = "Train glm6 - same as glm5 but removes the pcnt features")
+modelSummary(dataset = test,model = glm6, description = "Test glm6 - same as glm5 but removes the pcnt features")
+
+# Only use spayed indicator, animal type and days old
+glm7 <- glm(OutcomeType ~ AnimalType + Spayed + daysOld, data=train, family = binomial())
+summary(glm7)
+modelSummary(dataset = train,model = glm7, description = "Train glm7 - Only use spayed indicator, animal type and days old")
+modelSummary(dataset = test,model = glm7, description = "Test glm7 - Only use spayed indicator, animal type and days old")
+
+# Only use spayed indicator
+glm8 <- glm(OutcomeType ~ Spayed, data=train, family = binomial())
+summary(glm8)
+modelSummary(dataset = train,model = glm8, description = "Train glm8 - Only use spayed indicator")
+modelSummary(dataset = test,model = glm8, description = "Test glm8 - Only use spayed indicator")
+
+# Only use AnimalType indicator
+glm9 <- glm(OutcomeType ~ AnimalType, data=train, family = binomial())
+summary(glm9)
+modelSummary(dataset = train,model = glm9, description = "Train glm9 - Only use animalType")
+modelSummary(dataset = test,model = glm9, description = "Test glm9 - Only use animalType")
+
+# Only use AnimalType and Spayed indicator
+glm10 <- glm(OutcomeType ~ AnimalType + Spayed, data=train, family = binomial())
+summary(glm10)
+modelSummary(dataset = train,model = glm10, description = "Train glm10 - Only use AnimalType and Spayed indicator")
+modelSummary(dataset = test,model = glm10, description = "Test glm10 - Only use AnimalType and Spayed indicator")
+
+# Only use AnimalType and Spayed indicator and no name indicator
+glm11 <- glm(OutcomeType ~ AnimalType + Spayed + NoNameInd, data=train, family = binomial())
+summary(glm11)
+modelSummary(dataset = train,model = glm11, description = "Train glm11 - Only use AnimalType, no name ind and Spayed indicator")
+modelSummary(dataset = test,model = glm11, description = "Test glm11 - Only use AnimalType, no name ind and Spayed indicator")
+
+
+# --------------- Lasso Logistic Regression ------------ #
+library(glmnet)
+
+trainTmp <- train %>% mutate(hourNumeric = as.numeric(hour))
+trainTmp <- trainTmp %>% mutate(monthNumeric = as.numeric(month))
+testTmp <- test %>% mutate(hourNumeric = as.numeric(hour))
+testTmp <- testTmp %>% mutate(monthNumeric = as.numeric(month))
+
+
+trainLasso <- trainTmp %>% select("colorPcnt","breedPcnt","OutcomeType","AnimalType","NoNameInd","daysOld",
+                               "daysOldBinned","pitIndicator","sex","Spayed","mixedBreed","hour","month","blackColorInd","hourNumeric","monthNumeric")
+
+testLasso <- testTmp %>% select("colorPcnt","breedPcnt","OutcomeType","AnimalType","NoNameInd","daysOld",
+                               "daysOldBinned","pitIndicator","sex","Spayed","mixedBreed","hour","month","blackColorInd","hourNumeric","monthNumeric")
+
+#convert training data to matrix format
+x <- model.matrix(OutcomeType~.,trainLasso)
+#convert class to numerical variable
+y <- ifelse(trainLasso$OutcomeType=="Positive",1,0)
+
+#perform grid search to find optimal value of lambda
+#family= binomial => logistic regression, alpha=1 => lasso
+
+# check docs to explore other type.measure options
+cv.out <- cv.glmnet(x,y,alpha=1,family="binomial",type.measure = "mse" )
+#plot result
+plot(cv.out)
+
+#min value of lambda
+lambda_min <- cv.out$lambda.min
+#best value of lambda
+lambda_1se <- cv.out$lambda.1se
+#regression coefficients
+coef(cv.out,s=lambda_1se)
+
+#apply to train
+lasso_prob <- predict(cv.out, newx = x,s=lambda_1se,type="response")
+lasso_predict <- rep("Negative",nrow(trainLasso))
+lasso_predict[lasso_prob>.5] <- "Positive"
+conf<-table(pred=lasso_predict,true=trainLasso$OutcomeType)
+
+#Test Model Metrics
+  #accuracy
+  accuracy <- round(mean(lasso_predict==trainLasso$OutcomeType),4)*100
+  accuracy
+  #recall
+  recall <- (round(conf[2,2]/sum(conf[2,]),4)*100)
+  recall
+  #specificity
+  specificity <- (round(conf[1,1]/sum(conf[1,]),4)*100)
+  specificity
+  #precision
+  precision <- (round(conf[2,2]/sum(conf[,2]),4)*100)
+  precision
+
+description <- "Lasso regression train results with numeric versions of hour and month"
+
+newLine <- c(description,accuracy,recall,specificity,precision)
+model_results <- rbind(model_results,newLine)
+
+
+
+testLasso$hour5 <- 1
+testLasso$hour22 <- 1
+x_test <- model.matrix(OutcomeType ~ .,testLasso)
+#predict class, type="class"
+lasso_prob <- predict(cv.out, newx = x_test,s=lambda_1se,type="response")
+#translate probabilities to predictions
+lasso_predict <- rep("Negative",nrow(testLasso))
+lasso_predict[lasso_prob>.5] <- "Positive"
+#confusion matrix
+
+conf<-table(pred=lasso_predict,true=testLasso$OutcomeType)
+
+#Test Model Metrics
+  #accuracy
+  accuracy <- round(mean(lasso_predict==testLasso$OutcomeType),4)*100
+  accuracy
+  #recall
+  recall <- (round(conf[2,2]/sum(conf[2,]),4)*100)
+  recall
+  #specificity
+  specificity <- (round(conf[1,1]/sum(conf[1,]),4)*100)
+  specificity
+  #precision
+  precision <- (round(conf[2,2]/sum(conf[,2]),4)*100)
+  precision
+
+description <- "Lasso regression test results with numeric versions of hour and month"
+
+newLine <- c(description,accuracy,recall,specificity,precision)
+model_results <- rbind(model_results,newLine)
+
+
 
 # --------------- K-Fold Cross-Validation -------------- #
 pet.glm.cv<-
